@@ -1,0 +1,11 @@
+
+[Databases]
+
+# Directory to find "yaleB*" classes
+yale_ext = /Users/mike/docs/classes/machlearn/proj/dsets/CroppedYale
+ar_faces = 
+
+[Local]
+
+# Directory for storing items such as pre-computed dictionaries
+scratch = /Users/mike/docs/classes/machlearn/proj/code/scratch_data
