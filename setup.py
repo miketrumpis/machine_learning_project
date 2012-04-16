@@ -44,7 +44,9 @@ if __name__=='__main__':
             'recog',
             'recog.conf',
             'recog.faces',
-            'recog.dict'
+            'recog.dict',
+            'recog.opt',
+            'recog.support'
             ],
         ext_modules = [],
         package_data = {'recog.conf': ['conf.txt']},

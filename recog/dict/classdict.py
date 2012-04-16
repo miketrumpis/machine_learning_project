@@ -1,5 +1,6 @@
 import numpy as np
 from recog.image import load_faces
+from recog.support.descriptors import auto_attr
 
 class ClassDictionary(object):
     """
@@ -41,6 +42,10 @@ class ClassDictionary(object):
         self.frame = frame
         self.class_to_columns = class_to_columns
         self.column_to_class = column_to_class
+
+    @auto_attr
+    def BtB(self):
+        return np.dot(self.frame.T, self.frame)
 
     def __repr__(self):
         n, m = self.frame.shape
