@@ -1,7 +1,9 @@
 import numpy as np
+from scipy.sparse.linalg import LinearOperator
 from recog.image import load_faces
 from recog.support.descriptors import auto_attr
-
+## from .block_factorizing import Bw, Bty, diag_loaded_solve
+import block_factorizing as bf
 class ClassDictionary(object):
     """
     This dictionary will be the combination of linear frame basis, and
@@ -28,8 +30,10 @@ class ClassDictionary(object):
             # array is (n_examples, edim1, [edim2, ...])
             n_cols = len(arr)
             cols = np.array(arr, dtype=dtype).reshape(n_cols, -1)
-            c_means = cols.mean(axis=1)
-            cols -= c_means[:,None]
+            if debias:
+                c_means = cols.mean(axis=1)
+                cols -= c_means[:,None]
+            
             frame.append(cols)
             col_nums = tuple(range(n, n+n_cols))
             class_to_columns[cls] = col_nums
@@ -38,19 +42,48 @@ class ClassDictionary(object):
         frame = np.vstack(frame)
         frame = frame.transpose()
         del database
-
-        self.frame = frame
+        sq_norms = np.sum(frame**2, axis=0)
+        self.frame = frame / np.sqrt(sq_norms)
         self.class_to_columns = class_to_columns
         self.column_to_class = column_to_class
 
     @auto_attr
-    def BtB(self):
+    def AtA(self):
         return np.dot(self.frame.T, self.frame)
 
     def __repr__(self):
         n, m = self.frame.shape
         classes = len(self.class_to_columns)
         return 'A %d x %d frame of %d classes'%(n, m, classes)
+
+    def build_operators(
+            self, e_transforms = (None, None), p = None, **cg_kws
+            ):        
+        m, n = self.frame.shape
+        e_transform, et_transform = e_transforms
+        p = m if not p else p
+        B = LinearOperator(
+            (m, n+p), bf.Bw(self.frame, e_transform), dtype='d'
+            )
+        Bt = LinearOperator(
+            (n+p, m), bf.Bty(self.frame.T, p, et_transform), dtype='d'
+            )
+        ## BtB = LinearOperator(
+        ##     (n+p, n+p), self.BtBw(), dtype='d'
+        ##     )
+        # this is very unstable!!
+        ## BtBpI_solver = bf.diag_loaded_solve(
+        ##     self.frame, self.AtA, e_transforms=e_transforms, p=p, **cg_kws
+        ##     )
+        ## from ..opt.cg import basic_CG
+        ## # this is very slow :(
+        ## BtBpI = LinearOperator(
+        ##     (n+p, n+p), lambda x: x + Bt*(B*x), dtype='d'
+        ##     )
+        ## BtBpI_solver = lambda x, x0: basic_CG(BtBpI, x, x0=x0, **cg_kws)[0]
+        BBt_solve = bf.BBt_solver(self.frame, self.AtA, **cg_kws)
+        return B, Bt, BBt_solve
+
 
 # XXX: this may become PlainFacesDictionary later
 class FacesDictionary(ClassDictionary):
