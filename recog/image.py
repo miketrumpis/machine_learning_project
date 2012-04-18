@@ -11,6 +11,7 @@ def load_faces(dataset, training_set, testing_set):
         # the sum of the fractions should be <= 1
         assert (1 - training_set - testing_set) > -1e-8, 'Bad proportions'
         training_frac = training_set
+        testing_frac = testing_set
     else:
         raise NotImplementedError(
             'Only supporting random fractional partitions'
@@ -20,18 +21,23 @@ def load_faces(dataset, training_set, testing_set):
         images_by_class = load_yale()
     elif dataset == 'ar_faces':
         images_by_class = load_ar_faces()
+    else:
+        raise ValueError('dataset %s not recognized'%dataset)
 
     training_images = dict()
     testing_images = dict()
     for cls, images in images_by_class.iteritems():
         n = len(images)
         n_trn = int( np.ceil( training_frac*n ) )
-        n_tst = int( np.floor( (1-training_frac)*n ) )
+        n_tst = int( np.floor( testing_frac*n ) )
         r_idx = random.sample(xrange(n), n)
         training_images[cls] = [images[i] for i in r_idx[:n_trn]]
         testing_images[cls] = [images[i] for i in r_idx[n_trn:n_trn+n_tst]]
     del images_by_class
     return training_images, testing_images
+
+def load_saved_faces(dname):
+    pass
 
 def load_yale(exclude_ambient=True, raise_if_inhomogeneous=True):
     # I guess importing config parameters locally is one way of

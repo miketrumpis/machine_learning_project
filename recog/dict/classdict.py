@@ -1,9 +1,11 @@
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
-from recog.image import load_faces
 from recog.support.descriptors import auto_attr
 ## from .block_factorizing import Bw, Bty, diag_loaded_solve
 import block_factorizing as bf
+from recog import scratch
+import os
+
 class ClassDictionary(object):
     """
     This dictionary will be the combination of linear frame basis, and
@@ -11,12 +13,19 @@ class ClassDictionary(object):
     the dictionary elements.
     """
 
-    def __init__(self, database, dtype='d', debias=True):
+    def __init__(self, database, cls_order=None, dtype='d', debias=True):
         """
-        Construct a dictionary (frame) from a database (Python dict).
+        Construct a dictionary (frame) from a database (Python dict,
+        or preconstructed matrix).
         Keep track of which columns correspond to which classes
         """
 
+        if isinstance(database, dict):
+            self._init_from_dict(database, dtype, debias)
+        else:
+            self._init_from_array(database, cls_order, dtype, debias)
+
+    def _init_from_dict(self, database, dtype, debias):
         # structure of database is a list of ndarrays per key ...
         # flatten the arrays and concatenate them columnwise to
         # form the frame. Keep track of class-to-columns and
@@ -46,6 +55,97 @@ class ClassDictionary(object):
         self.frame = frame / np.sqrt(sq_norms)
         self.class_to_columns = class_to_columns
         self.column_to_class = column_to_class
+
+    def _init_from_array(self, database, cls_order, dtype, debias):
+        # cls_order is simply class_to_columns
+        if database.dtype != dtype:
+            database = database.astype(dtype)
+        if debias:
+            c_means = database.mean(axis=0)
+            database -= c_means
+        self.frame = database
+        self.class_to_columns = cls_order
+        self.columns_to_class = dict()
+        for cls, cols in cls_order.iteritems():
+            self.columns_to_class.update( ((c, cls) for c in cols) )
+
+    @classmethod
+    def pair_from_saved(klass, fname, training, testing):
+        """
+        Return a training/testing dictionary from a saved matrix.
+
+        Parameters
+        ----------
+
+        fname : str
+          the filename, to be found in the scratch directory
+
+        training : float
+          proportion of columns to use for training
+
+        testing : float
+          proportion of columns to use for testing (training + testing <= 1)
+
+        Notes
+        -----
+
+        doc test
+        >>> r = classdict.ClassDictionary.pair_from_saved('asdf2', .4, .2)
+        >>> set(r[0]).isdisjoint(set(r[1]))
+        True
+        >>> sum([ len(v) for v in r[3].values() ]) == len(r[1])
+        True
+        >>> sum([ len(v) for v in r[2].values() ]) == len(r[0])
+        True
+        """
+
+        fname = os.path.splitext(fname)[0] + '.npz'
+        arrz = np.load(os.path.join(scratch, fname))
+        # this is a run-length descriptions of the columns per class
+        cls_counts = arrz['arr_0']
+        # expand it into column indices
+        trn_cls_columns = list()
+        trn_cols_by_class = dict()
+        tst_cls_columns = list()
+        tst_cols_by_class = dict()
+        n = 0
+        n_trn = 0
+        n_tst = 0
+        for item in cls_counts:
+            cls = item[0]; count = item[1]
+            c_trn = int( np.ceil( training*count ) )
+            c_tst = int( np.floor( testing*count ) )
+            shuff_idx = np.arange(n, n+count)
+            n += count
+            np.random.shuffle(shuff_idx)
+            
+            trn_cls_columns = trn_cls_columns + \
+                list(shuff_idx[:c_trn])
+            tst_cls_columns = tst_cls_columns + \
+                list(shuff_idx[c_trn:c_trn+c_tst])
+
+            trn_cols_by_class[cls] = range(n_trn, n_trn + c_trn)
+            n_trn += c_trn
+            tst_cols_by_class[cls] = range(n_tst, n_tst + c_tst)
+            n_tst += c_tst
+
+        print 'built partitions'
+        # now partition the matrix into training and testing sets
+        matrix = arrz['arr_1']
+        print 'loaded matrix'
+        trn_matrix = matrix[:, trn_cls_columns]
+        tst_matrix = matrix[:, tst_cls_columns]
+        print 'partitioned matrix'
+        training = klass(
+            trn_matrix, cls_order=trn_cols_by_class, dtype=trn_matrix.dtype
+            )
+        testing = klass(
+            tst_matrix, cls_order=tst_cols_by_class, dtype=tst_matrix.dtype
+            )
+        print 'built classes'
+        return training, testing
+    
+        ## return trn_cls_columns, tst_cls_columns, trn_cols_by_class, tst_cols_by_class
 
     @auto_attr
     def AtA(self):
@@ -84,14 +184,51 @@ class ClassDictionary(object):
         BBt_solve = bf.BBt_solver(self.frame, self.AtA, **cg_kws)
         return B, Bt, BBt_solve
 
+def save_whole_dictionary(partitions, fname):
+    # the partitions sequence should hold a number of ClassDictionaries,
+    # whose class sets are identical, but whose columns represent distinct
+    # samples from those classes.
+    # Note -- No check is performed to enforce the uniqueness of the
+    # samples!! Niether are the consistencies of the samples checked (i.e.
+    # whether the bias and norm are standardized)
 
-# XXX: this may become PlainFacesDictionary later
-class FacesDictionary(ClassDictionary):
+    # build a new matrix whose contiguous column partitions are a complete
+    # set of samples from each class. Columns within classes in arbitrary
+    # order, and then classes in arbitrary order
 
-    @staticmethod
-    def frame_and_samples(dbname, training, testing, **class_kws):
-        training, testing = load_faces(dbname, training, testing)
-        trn_dict = FacesDictionary(training, **class_kws)
-        tst_dict = FacesDictionary(testing, debias=False)
-        return trn_dict, tst_dict
-    
+    p1 = partitions[0]
+    m = p1.frame.shape[0]
+    cls_set = set( p1.class_to_columns.keys() )
+    cls_cols = dict(( (c, []) for c in cls_set ))
+    for p in partitions:
+        c_set = set( p.class_to_columns.keys() )
+        # should make sure intersection is complete
+        if cls_set.difference(c_set):
+            del cls_cols
+            raise ValueError('One of the partitions includes a new class')
+        for cls in c_set:
+            c_cols = p.class_to_columns[cls]
+            cls_cols[cls].append( p.frame[:, c_cols] )
+    # flatten the list of column partitions, then join
+    n_cols = [ c[0].shape[1] + c[1].shape[1] for c in cls_cols.itervalues() ]
+    mat = np.empty( (m, np.sum(n_cols)), p1.frame.dtype )
+    n = 0
+    cls_order = []
+    for cls, cols in cls_cols.iteritems():
+        n1 = cols[0].shape[1]
+        n2 = cols[1].shape[1]
+        mat[:,n:n+n1] = cols[0]; n += n1
+        mat[:,n:n+n2] = cols[1]; n += n2
+        cls_order.append( (cls, n1+n2) )
+
+    descr_arr = np.asanyarray(cls_order, dtype=object)
+    ## dtype = np.dtype( [ ('class_counts', object), ('matrix', object) ] )
+    ## aug_mat = np.empty(1, dtype=dtype)
+    ## aug_mat['class_counts'][0] = np.asarray(cls_order)
+    ## aug_mat['matrix'][0] = mat
+
+    ## return mat, cls_order
+    fname = os.path.join(scratch, fname)
+    fname = os.path.splitext(fname)[0]
+    np.savez(fname, descr_arr, mat)
+    return fname
