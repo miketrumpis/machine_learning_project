@@ -65,9 +65,9 @@ class ClassDictionary(object):
             database -= c_means
         self.frame = database
         self.class_to_columns = cls_order
-        self.columns_to_class = dict()
+        self.column_to_class = dict()
         for cls, cols in cls_order.iteritems():
-            self.columns_to_class.update( ((c, cls) for c in cols) )
+            self.column_to_class.update( ((c, cls) for c in cols) )
 
     @classmethod
     def pair_from_saved(klass, fname, training, testing):
@@ -108,6 +108,9 @@ class ClassDictionary(object):
         trn_cols_by_class = dict()
         tst_cls_columns = list()
         tst_cols_by_class = dict()
+        # XXX: The following logic seems redundant with (and perhaps
+        # faster than) the partitioning in "load_faces()". Think about
+        # making a "partition matrix" function
         n = 0
         n_trn = 0
         n_tst = 0
@@ -156,9 +159,17 @@ class ClassDictionary(object):
         classes = len(self.class_to_columns)
         return 'A %d x %d frame of %d classes'%(n, m, classes)
 
-    def build_operators(
-            self, e_transforms = (None, None), p = None, **cg_kws
-            ):        
+    def build_extended_operators(
+            self, e_transforms = (None, None), p = None
+            ):
+        """
+        Construct the LinearOperators which correspond to B = [A A_e]
+        in the problem y = Ax + e' = [A A_e]*[x; e] = Bw
+
+        Specifically, these operators compute B*w, (Bt)*y
+        (and BtB*w ???)
+        """
+        
         m, n = self.frame.shape
         e_transform, et_transform = e_transforms
         p = m if not p else p
@@ -168,21 +179,32 @@ class ClassDictionary(object):
         Bt = LinearOperator(
             (n+p, m), bf.Bty(self.frame.T, p, et_transform), dtype='d'
             )
-        ## BtB = LinearOperator(
-        ##     (n+p, n+p), self.BtBw(), dtype='d'
-        ##     )
-        # this is very unstable!!
-        ## BtBpI_solver = bf.diag_loaded_solve(
-        ##     self.frame, self.AtA, e_transforms=e_transforms, p=p, **cg_kws
-        ##     )
-        ## from ..opt.cg import basic_CG
-        ## # this is very slow :(
-        ## BtBpI = LinearOperator(
-        ##     (n+p, n+p), lambda x: x + Bt*(B*x), dtype='d'
-        ##     )
-        ## BtBpI_solver = lambda x, x0: basic_CG(BtBpI, x, x0=x0, **cg_kws)[0]
-        BBt_solve = bf.BBt_solver(self.frame, self.AtA, **cg_kws)
-        return B, Bt, BBt_solve
+        return B, Bt
+
+    def BtBpI_solver(self, **kwargs):
+        """
+        Constructs an operator to solve (mu*I + BtB)x = y for x
+        """
+
+        # (muI + BtB)^-1 = umI - Bt*[(umI + BBt)^-1]*B
+        #                = umI - Bt*[((um+1)I + AAt)^-1]*B ((A_e)(A_et) = I)
+        # where um = 1/mu
+        # two paths -- if m < n, then solve this problem
+        # otherwise, if m > n, decompose the inner inverse again
+        A = self.frame
+        AtA = self.AtA
+        m, n = A.shape
+        return bf.diag_loaded_solve(A, AtA=AtA, mxm = m < n, **kwargs)
+
+    def BBt_solver(self, **kwargs):
+        """
+        Constructs an operator to solve (BBt)u = w for u
+        """
+        A = self.frame
+        AtA = self.AtA
+        m, n = A.shape
+        return bf.BBt_solver(A, mxm = m < n, AtA = AtA, **kwargs)
+
 
 def save_whole_dictionary(partitions, fname):
     # the partitions sequence should hold a number of ClassDictionaries,
