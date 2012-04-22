@@ -24,6 +24,7 @@ class ClassDictionary(object):
             self._init_from_dict(database, dtype, debias)
         else:
             self._init_from_array(database, cls_order, dtype, debias)
+        self.n_classes = len(self.class_to_columns)
 
     def _init_from_dict(self, database, dtype, debias):
         # structure of database is a list of ndarrays per key ...
@@ -205,6 +206,26 @@ class ClassDictionary(object):
         m, n = A.shape
         return bf.BBt_solver(A, mxm = m < n, AtA = AtA, **kwargs)
 
+    def compute_residuals(self, x, y):
+        """
+        Return a sequence of pairs (r_i, cls_i) where r_i is the
+        l2 residual ||AR(i)x - y||^2, and R(i) is a projection to
+        the subspace of class i
+        """
+        resids = []
+        for cls, cols in self.class_to_columns.iteritems():
+            xi = np.take(x, cols)
+            Ai = np.take(self.frame, cols, axis=1)
+            ri = np.dot(Ai,xi) - y
+            resids.append( (np.dot(ri, ri), cls) )
+        return resids
+
+    def SCI(self, x, cls):
+        k = self.n_classes
+        mx_di = np.take(x, self.class_to_columns[cls]).max()
+        ell1 = np.sum(np.abs(x))
+        return (k*mx_di/ell1 - 1) / (k-1)
+        
 
 def save_whole_dictionary(partitions, fname):
     # the partitions sequence should hold a number of ClassDictionaries,

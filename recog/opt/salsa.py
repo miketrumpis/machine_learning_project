@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 from cg import basic_CG
+from shrinkers import shrink_thresh
 
 def project_to_feasible(s, y, eps):
     sy_err = s - y
@@ -21,6 +22,10 @@ def indicator(x, y, eps):
 def regularize_operator(BtB):
     m, m = BtB.shape
     return LinearOperator( (m,m), lambda x: BtB*x + x, dtype='d' )
+
+def l1_proximity_map(tau, mu):
+    tau, mu = map(float, (tau, mu))
+    return lambda x: shrink_thresh(x, tau/mu)
     
 # constrained salsa -- solves
 # argmin{x} \phi(x) subject to ||Bx - y||_2 <= \epsilon
