@@ -54,10 +54,11 @@ def Bty(At, p, et_transform=None):
 def diag_loaded_solve(
         A,
         e_transforms=(),
-        mu=1, mxm=True, max_r=2000,
+        mu=1, mxm=True,
         AtA = None,
         **cg_kws
         ):
+    from recog import max_inverse_size as max_r
     # create a method to (approximately) solve (BtB + mu*I)x = y for x
     # Depending on whether m<n, then reduce the actual inverse to
     # ((mu+1)I_m + AAt)^-1 (m < n)
@@ -153,7 +154,8 @@ def diag_loaded_solve(
     return mxm_solver() if mxm else nxn_solver()
             
             
-def BBt_solver(A, gma=1, mxm = True, AtA = None, max_r = 2000, **cg_kws):
+def BBt_solver(A, gma=1, mxm = True, AtA = None, **cg_kws):
+    from recog import max_inverse_size as max_r
     # This variant solves the problem (BBt)x = y for x. Conveniently,
     # the transform domain of the error e is irrelevant, since it
     # is required to be a 1-tight frame (Ae)Ae^t = I_{m}

@@ -160,6 +160,60 @@ class ClassDictionary(object):
         classes = len(self.class_to_columns)
         return 'A %d x %d frame of %d classes'%(n, m, classes)
 
+    def build_operators(self):
+        """
+        Construct LinearOperators for the matrix products Ax and Aty
+        """
+        A = self.frame
+        m, n = A.shape
+        Ax = lambda x: np.dot(A, x)
+        Ax = LinearOperator( (m,n), Ax, matmat=Ax, dtype='d' )
+        Aty = lambda y: np.dot(A.T, y)
+        Aty = LinearOperator( (n,m), Aty, matmat=Aty, dtype='d' )
+        return Ax, Aty
+
+    def AtApI_solver(self, mu=1, **cg_kws):
+        """
+        Construct the solver for (AtA + muI)x = y (for x).
+
+        The inverse is carried out on a matrix of rank min(m,n),
+        where m x n is the size of A
+        """
+        from recog import max_inverse_size as max_r
+        A = self.frame
+        m, n = A.shape
+        r = min(m,n)
+        do_cg = r > max_r
+
+        if m < n:
+            H = np.dot(A, A.T)
+        else:
+            H = self.AtA.copy()
+        H.flat[::(r+1)] += mu
+        if do_cg:
+            C = LinearOperator((r,r), lambda x: np.dot(H, x), dtype = 'd')
+            C_solve = lambda x, x0: basic_CG(C, x, x0=x0, **cg_kws)[0]
+        else:
+            C = np.linalg.inv(H)
+            C_solve = lambda x, x0: np.dot(C, x)
+
+        class mxm_solve(object):
+            c0 = None
+            def __call__(self, x):
+                s = np.dot(A.T, x)
+                c = C_solve(s, self.c0)
+                s = np.dot(A, c)
+                x_out = (x - s)
+                x_out /= mu
+                return x_out
+        class nxn_solve(object):
+            c0 = None
+            def __call__(self, x):
+                self.c0 = C_solve(x, self.c0)
+                return self.c0
+        
+        return nxn_solve() if n < m else mxm_solve()
+
     def build_extended_operators(
             self, e_transforms = (None, None), p = None
             ):
@@ -174,11 +228,13 @@ class ClassDictionary(object):
         m, n = self.frame.shape
         e_transform, et_transform = e_transforms
         p = m if not p else p
+        Bw = bf.Bw(self.frame, e_transform)
+        Bty = bf.Bty(self.frame.T, p, et_transform)
         B = LinearOperator(
-            (m, n+p), bf.Bw(self.frame, e_transform), dtype='d'
+            (m, n+p), Bw, matmat=Bw, dtype='d'
             )
         Bt = LinearOperator(
-            (n+p, m), bf.Bty(self.frame.T, p, et_transform), dtype='d'
+            (n+p, m), Bty, matmat=Bty, dtype='d'
             )
         return B, Bt
 
@@ -215,15 +271,17 @@ class ClassDictionary(object):
         resids = []
         for cls, cols in self.class_to_columns.iteritems():
             xi = np.take(x, cols)
-            Ai = np.take(self.frame, cols, axis=1)
+            Ai = self.frame[:, cols]
             ri = np.dot(Ai,xi) - y
             resids.append( (np.dot(ri, ri), cls) )
         return resids
 
-    def SCI(self, x, cls):
+    def SCI(self, x):
         k = self.n_classes
-        mx_di = np.take(x, self.class_to_columns[cls]).max()
-        ell1 = np.sum(np.abs(x))
+        ell1_i = [ np.abs(np.take(x, cols)).sum()
+                   for cols in self.class_to_columns.itervalues() ]
+        mx_di = np.max(ell1_i)
+        ell1 = np.sum(ell1_i)
         return (k*mx_di/ell1 - 1) / (k-1)
         
 

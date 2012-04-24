@@ -1,3 +1,7 @@
+[Numerics]
+
+# the maximum matrix dimension for a dense inverse (noniterative)
+max_inverse_size = 2000
 
 [Databases]
 

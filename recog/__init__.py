@@ -2,6 +2,9 @@
 import os
 from ConfigParser import SafeConfigParser
 
+# XXX: might be smarter to have this construct a "Configuration" object
+# which would be a "Bunch" type referenced by recog.config --
+# such that configuration parameters are recog.config.param_xyz
 def initialize():
     gdict = globals()
     this_dir = os.path.split(os.path.abspath(__file__))[0]

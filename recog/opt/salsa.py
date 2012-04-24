@@ -49,6 +49,7 @@ def c_salsa(B, Bt, BtBpI_solve, y, eps, phi, phi_map, n_iter=50, rtol = 1e-5):
 
     converged = False
     k = 0
+    du = []
     while not converged:
         k += 1
         ## r = v1 + d1 + np.dot(B.T, v2+d2)
@@ -66,10 +67,11 @@ def c_salsa(B, Bt, BtBpI_solve, y, eps, phi, phi_map, n_iter=50, rtol = 1e-5):
         r = np.linalg.norm(Bu-y)
         dv1 = np.linalg.norm(Bu-v2)
         dv2 = np.linalg.norm(u-v1)
+        du.append(u.copy())
         print 'C-SALSA step', k, 'objective: %1.4f, %1.4e, %1.4e, %1.4e'%(J,r,dv1,dv2)
         if k == n_iter:
             converged = True
-    return u
+    return u, np.array(du)
 
 # second form of SALSA with equality constraint -- Basis Pursuit SALSA
 def bp_salsa(B, Bt, BBt_solve, y, phi, phi_map, n_iter=50):
@@ -82,6 +84,7 @@ def bp_salsa(B, Bt, BBt_solve, y, phi, phi_map, n_iter=50):
     u = Bt*y #np.zeros(n)
     converged = False
     k = 0
+    du = []
     while not converged:
         k += 1
         a = phi_map(u+d) - d
@@ -91,10 +94,11 @@ def bp_salsa(B, Bt, BBt_solve, y, phi, phi_map, n_iter=50):
         J = phi(u) #+ indicator(Bu, y, eps)
         r = np.linalg.norm(B*u-y)
         dv = np.linalg.norm(u-a)
+        du.append(u.copy())
         print 'BP-SALSA step',k,'objective: %1.4e, %1.4e, %1.4e'%(J,r,dv)
         if k == n_iter:
             converged = True
-    return u
+    return u, np.array(du)
 
 # Solves quadratic + regularizer form:
 # min_x 0.5*||Bx - y||^2 + tau*phi(x)
@@ -113,17 +117,20 @@ def qreg_salsa(B, Bt, BtB_solve, y, phi, phi_map, mu, x0 = None, n_iter = 50):
     v = 0
     d = 0
     k = 0
+    du = []
     converged = False
     while not converged:
         u = BtB_solve(Bty + mu*(v + d))
         v = phi_map(u-d)
         d = d - u + v
         k = k + 1
-        J = phi(v)
+
         r = B*u - y
+        J = phi(v)
         r = np.linalg.norm(r) #np.dot(r, r)
         dv = np.linalg.norm(u-v) #np.dot(u-v, u-v)
+        du.append(u.copy())
         print 'SALSA step %d l1-norm %1.4f resid %1.2e div %1.2e'%(k, J, r, dv)
         if k == n_iter:
             converged = True
-    return u
+    return u, np.array(du)
