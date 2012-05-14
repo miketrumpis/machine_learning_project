@@ -1,0 +1,36 @@
+==============================================
+Experimental code for Machine Learning project
+==============================================
+
+This package is a skeleton of a framework for computing the
+sparse dictionary coding classification problem for face
+recognition. This framework is described in detail in 
+
+J. Wright, A. Y. Yang, A. Ganesh, S. S. Sastry, and Y. Ma, 
+Robust face recognition via sparse representation.
+IEEE transactions on pattern analysis and machine intelligence,
+vol. 31, no. 2, pp. 210-27, Feb. 2009. 
+
+
+Datasets
+--------
+
+Face databases are required to use the code herein. Paths to
+databases, and other configuration parameters should be defined in the
+following file:
+
+recog/conf/conf.txt
+
+I've only implemented import methods for the Extended Yale B dataset,
+as described in 
+
+A. S. Georghiades, P. N. Belhumeur, and D. J. Kriegman, 
+From Few to Many : Illumination Cone Models for Face Recognition under 
+Variable Lighting and Pose,  
+IEEE Transactions on Pattern Analysis And Machine Intelligence, 
+vol. 23, no. 6, pp. 643-660, 2001.
+
+License Info
+------------
+
+See LICENSE file
