@@ -1,19 +1,22 @@
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
-from recog.support.descriptors import auto_attr
-## from .block_factorizing import Bw, Bty, diag_loaded_solve
+from recog.support.descriptors import auto_attr, ResetMixin
 import block_factorizing as bf
+import ksvd
 from recog import scratch
 import os
 
-class ClassDictionary(object):
+class ClassDictionary(ResetMixin):
     """
     This dictionary will be the combination of linear frame basis, and
     a correspondence between the columns and the L classes composing
     the dictionary elements.
     """
 
-    def __init__(self, database, cls_order=None, dtype='d', debias=True):
+    def __init__(
+            self, database, cls_order=None, dtype='d', debias=True,
+            **other_kws
+            ):
         """
         Construct a dictionary (frame) from a database (Python dict,
         or preconstructed matrix).
@@ -25,6 +28,11 @@ class ClassDictionary(object):
         else:
             self._init_from_array(database, cls_order, dtype, debias)
         self.n_classes = len(self.class_to_columns)
+        self._normalize_frame()
+
+    def _normalize_frame(self):
+        sq_norms = np.sum(self.frame**2, axis=0)
+        self.frame /= np.sqrt(sq_norms)
 
     def _init_from_dict(self, database, dtype, debias):
         # structure of database is a list of ndarrays per key ...
@@ -45,15 +53,16 @@ class ClassDictionary(object):
                 cols -= c_means[:,None]
             
             frame.append(cols)
-            col_nums = tuple(range(n, n+n_cols))
+            # XXX: this tuple is causing problems in indexing.. why??
+            #col_nums = tuple(range(n, n+n_cols))
+            col_nums = range(n, n+n_cols)
             class_to_columns[cls] = col_nums
             column_to_class.update( ((c, cls) for c in col_nums) )
             n += n_cols
         frame = np.vstack(frame)
         frame = frame.transpose()
         del database
-        sq_norms = np.sum(frame**2, axis=0)
-        self.frame = frame / np.sqrt(sq_norms)
+        self.frame = frame
         self.class_to_columns = class_to_columns
         self.column_to_class = column_to_class
 
@@ -67,11 +76,32 @@ class ClassDictionary(object):
         self.frame = database
         self.class_to_columns = cls_order
         self.column_to_class = dict()
-        for cls, cols in cls_order.iteritems():
+        for cls, cols in self.class_to_columns.iteritems():
             self.column_to_class.update( ((c, cls) for c in cols) )
 
+    def learn_class_dicts(self, m, L):
+        # learn a separate dictionary for each class of samples
+        # in the current dictionary
+        new_frame = []
+        for cls, cols in self.class_to_columns.iteritems():
+            print 'learning class', cls, 'from %d examples'%len(cols)
+            Y = self.frame[:,cols]
+            A, X = ksvd.ksvd(Y, m, L, n_iter=60)
+            n_skip = m*len(new_frame)
+            self.class_to_columns[cls] = range(n_skip, n_skip + m)
+            new_frame.append(A)
+        new_col_to_class = dict()
+        for cls, cols in self.class_to_columns.iteritems():
+            new_col_to_class.update( ((c, cls) for c in cols) )
+        self.column_to_class = new_col_to_class
+        self.frame = np.hstack(new_frame)
+        self._normalize_frame()
+
     @classmethod
-    def pair_from_saved(klass, fname, training, testing):
+    def pair_from_saved(
+            klass, fname, training, testing,
+            klass2=None, **klass_kws
+            ):
         """
         Return a training/testing dictionary from a saved matrix.
 
@@ -141,10 +171,14 @@ class ClassDictionary(object):
         tst_matrix = matrix[:, tst_cls_columns]
         print 'partitioned matrix'
         training = klass(
-            trn_matrix, cls_order=trn_cols_by_class, dtype=trn_matrix.dtype
+            trn_matrix, cls_order=trn_cols_by_class,
+            dtype=trn_matrix.dtype, **klass_kws
             )
-        testing = klass(
-            tst_matrix, cls_order=tst_cols_by_class, dtype=tst_matrix.dtype
+        if not klass2:
+            klass2 = klass
+        testing = klass2(
+            tst_matrix, cls_order=tst_cols_by_class,
+            dtype=tst_matrix.dtype, **klass_kws
             )
         print 'built classes'
         return training, testing
@@ -200,9 +234,9 @@ class ClassDictionary(object):
         class mxm_solve(object):
             c0 = None
             def __call__(self, x):
-                s = np.dot(A.T, x)
+                s = np.dot(A, x)
                 c = C_solve(s, self.c0)
-                s = np.dot(A, c)
+                s = np.dot(A.T, c)
                 x_out = (x - s)
                 x_out /= mu
                 return x_out
@@ -251,7 +285,9 @@ class ClassDictionary(object):
         A = self.frame
         AtA = self.AtA
         m, n = A.shape
-        return bf.diag_loaded_solve(A, AtA=AtA, mxm = m < n, **kwargs)
+        mxm = m < n
+        #mxm = False
+        return bf.diag_loaded_solve(A, AtA=AtA, mxm = mxm, **kwargs)
 
     def BBt_solver(self, **kwargs):
         """
@@ -268,20 +304,32 @@ class ClassDictionary(object):
         l2 residual ||AR(i)x - y||^2, and R(i) is a projection to
         the subspace of class i
         """
+        # return one list per column in x,y
         resids = []
+        if len(x.shape) < 2:
+            x = np.reshape(x, (len(x), -1))
+            y = np.reshape(y, (len(y), -1))
+        for rhs in xrange(x.shape[1]):
+            resids.append( list() )
         for cls, cols in self.class_to_columns.iteritems():
-            xi = np.take(x, cols)
+            #xi = np.take(x, cols)
+            xi = x[cols]
             Ai = self.frame[:, cols]
             ri = np.dot(Ai,xi) - y
-            resids.append( (np.dot(ri, ri), cls) )
+            for rhs in xrange(ri.shape[1]):
+                resids[rhs].append( (np.dot(ri[:,rhs], ri[:,rhs]), cls) )
+        if len(resids) < 2:
+            return resids[0]
         return resids
 
     def SCI(self, x):
         k = self.n_classes
-        ell1_i = [ np.abs(np.take(x, cols)).sum()
+        ## ell1_i = [ np.abs(np.take(x, cols)).sum()
+        ##            for cols in self.class_to_columns.itervalues() ]
+        ell1_i = [ np.abs(x[cols]).sum(axis=0)
                    for cols in self.class_to_columns.itervalues() ]
-        mx_di = np.max(ell1_i)
-        ell1 = np.sum(ell1_i)
+        mx_di = np.max(ell1_i, axis=0)
+        ell1 = np.sum(ell1_i, axis=0)
         return (k*mx_di/ell1 - 1) / (k-1)
         
 
@@ -290,7 +338,7 @@ def save_whole_dictionary(partitions, fname):
     # whose class sets are identical, but whose columns represent distinct
     # samples from those classes.
     # Note -- No check is performed to enforce the uniqueness of the
-    # samples!! Niether are the consistencies of the samples checked (i.e.
+    # samples!! Neither are the consistencies of the samples checked (i.e.
     # whether the bias and norm are standardized)
 
     # build a new matrix whose contiguous column partitions are a complete

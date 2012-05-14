@@ -4,9 +4,10 @@ import os.path as p
 from glob import glob
 from PIL import Image
 
-def load_faces(dataset, training_set, testing_set):
+def load_faces(dataset, training_set, testing_set, resize=()):
     # if training/testing are floats < 1, then they are proportions
     # of the total data to be chosen randomly
+    # resize is given as (w, h)
     if isinstance(training_set, float) and isinstance(testing_set, float):
         # the sum of the fractions should be <= 1
         assert (1 - training_set - testing_set) > -1e-8, 'Bad proportions'
@@ -18,7 +19,7 @@ def load_faces(dataset, training_set, testing_set):
             )
     # get dictionaries of images keyed by class labels
     if dataset == 'yale_ext':
-        images_by_class = load_yale()
+        images_by_class = load_yale(resize=resize)
     elif dataset == 'ar_faces':
         images_by_class = load_ar_faces()
     else:
@@ -39,7 +40,10 @@ def load_faces(dataset, training_set, testing_set):
 def load_saved_faces(dname):
     pass
 
-def load_yale(exclude_ambient=True, raise_if_inhomogeneous=True):
+def load_yale(
+        exclude_ambient=True, raise_if_inhomogeneous=True,
+        resize=()
+        ):
     # I guess importing config parameters locally is one way of
     # making them mutable... but dumb
     from recog import yale_ext
@@ -53,7 +57,11 @@ def load_yale(exclude_ambient=True, raise_if_inhomogeneous=True):
         cls_label = p.split(cls)[1]
         # just keep the string of the last 2 digits
         cls_label = cls_label[-2:]
-        examples = [np.array(Image.open(pgm)) for pgm in pgm_files]
+        if resize:
+            examples = [np.array(Image.open(pgm).resize(resize))
+                        for pgm in pgm_files]
+        else:
+            examples = [np.array(Image.open(pgm)) for pgm in pgm_files]
         if raise_if_inhomogeneous and \
             filter( lambda a: a.shape != examples[0].shape, examples[1:] ):
             raise ValueError(

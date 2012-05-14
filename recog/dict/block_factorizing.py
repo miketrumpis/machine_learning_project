@@ -112,7 +112,7 @@ def diag_loaded_solve(
             w_out = w/mu
             w_out[:n] -= t1/mu
             w_out[n:] -= b1/mu
-            return w
+            return w_out
         
     class nxn_solver(object):
         c0 = None
@@ -197,7 +197,7 @@ def BBt_solver(A, gma=1, mxm = True, AtA = None, **cg_kws):
         c0 = None
         def __call__(self, y):
             #this is just C_solve(y), and done
-            yt = C_solve(y)
+            yt = C_solve(y, self.c0)
             self.c0 = yt
             return yt
         def reset(self):
